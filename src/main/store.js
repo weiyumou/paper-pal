@@ -49,33 +49,40 @@ async function updateSettings(patch) {
 }
 
 // API keys are encrypted with the OS keychain when available.
-function encodeSecret(value) {
+async function encodeSecret(value) {
   if (!value) return null;
-  if (safeStorage.isEncryptionAvailable()) {
-    return { enc: safeStorage.encryptString(value).toString('base64') };
+  if (await safeStorage.isAsyncEncryptionAvailable()) {
+    return { enc: (await safeStorage.encryptStringAsync(value)).toString('base64') };
   }
   return { plain: value };
 }
 
-function decodeSecret(stored) {
-  if (!stored) return '';
+// Resolves to { value, stale }: `stale` means the keychain key was rotated and the secret should be saved again.
+async function decodeSecret(stored) {
+  if (!stored) return { value: '' };
   try {
-    if (stored.enc) return safeStorage.decryptString(Buffer.from(stored.enc, 'base64'));
+    if (stored.enc) {
+      const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(Buffer.from(stored.enc, 'base64'));
+      return { value: result, stale: shouldReEncrypt };
+    }
   } catch {
-    return '';
+    return { value: '' };
   }
-  return stored.plain || '';
+  return { value: stored.plain || '' };
 }
 
 async function getSecret(name) {
   const s = await getSettings();
-  return decodeSecret(s.secrets?.[name]);
+  const { value, stale } = await decodeSecret(s.secrets?.[name]);
+  if (stale && value) await setSecret(name, value);
+  return value;
 }
 
 async function setSecret(name, value) {
   const s = await getSettings();
+  const encoded = await encodeSecret(value);
   const secrets = { ...(s.secrets || {}) };
-  if (value) secrets[name] = encodeSecret(value);
+  if (encoded) secrets[name] = encoded;
   else delete secrets[name];
   await updateSettings({ secrets });
 }
