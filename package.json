@@ -1,0 +1,20 @@
+{
+  "name": "paper-pal",
+  "version": "0.1.0",
+  "description": "Lightweight PDF reader for academic researchers",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-packager . \"Paper Pal\" --platform=darwin --out=dist --overwrite --icon=assets/icon.icns --app-bundle-id=local.paperpal.app --ignore=\"^/(dist|assets|\\.claude)($|/)\"",
+    "install-app": "npm run package && codesign --force --deep -s - \"dist/Paper Pal-darwin-arm64/Paper Pal.app\" && rm -rf \"/Applications/Paper Pal.app\" && cp -R \"dist/Paper Pal-darwin-arm64/Paper Pal.app\" /Applications/"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^6.5.438"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.3.0"
+  },
+  "productName": "Paper Pal"
+}
