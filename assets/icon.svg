@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="#24364d"/>
+  <path d="M250 742H800L788 800H238Z" fill="#f7b500" stroke="#f7b500" stroke-width="22" stroke-linejoin="round"/>
+  <text x="512" y="672" text-anchor="middle" font-family="Songti SC" font-weight="900" font-size="540" fill="#fbfaf6">读</text>
+</svg>
