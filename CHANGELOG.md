@@ -1,0 +1,15 @@
+# Changelog
+
+## 0.1.0 — 2026-11-11
+
+First release.
+
+- PDF viewer built on PDF.js, with find, zoom, fit to width, page navigation, Open Recent, drag and drop, and reopening the last document.
+- Clickable in-text citations that show the cited paper's metadata and abstract, looked up through Crossref, Semantic Scholar and OpenAlex.
+- Optional AI summaries of cited papers and translation of selected text, through OpenRouter.
+- Highlights in six colours, per-highlight and per-paper notes, autosave keyed to the PDF's contents, and Markdown export.
+- Select and marker tools with customizable mouse and keyboard shortcuts.
+- Web and Google Scholar search in a side panel.
+- Settings for API keys (stored encrypted), the summary model, and tool shortcuts.
+- macOS packaging and install scripts.
+- Released under the MIT License.
