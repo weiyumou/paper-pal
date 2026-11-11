@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:; frame-src https:">
+  <title>Paper Pal</title>
+  <link rel="stylesheet" href="../../node_modules/pdfjs-dist/web/pdf_viewer.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="toolbar">
+    <button id="btn-sidebar" class="tb" title="Notes sidebar (⌘B)">☰</button>
+    <button id="btn-open" class="tb" title="Open PDF (⌘O)">Open</button>
+    <span class="group tools" role="toolbar" aria-label="Tools">
+      <button id="tool-select" class="tb tool" title="Select text (V)" aria-label="Select tool">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 1.5v11.2l3-2.6 1.9 4.4 1.9-.8-1.9-4.3h4z" fill="currentColor"/></svg>
+      </button>
+      <button id="tool-marker" class="tb tool" title="Marker: mark text as you select it (M)" aria-label="Marker tool">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M10.6 1.3l4.1 4.1-6.9 6.9-4.1-4.1zM3 9.1l3.9 3.9-1.3 1.3H1.7z" fill="currentColor"/><rect x="8" y="13.4" width="7" height="1.6" fill="var(--mark, currentColor)"/></svg>
+      </button>
+      <span id="tool-colors" title="Marker colour"></span>
+    </span>
+    <span id="doc-title">No document</span>
+    <span class="spacer"></span>
+    <span id="save-status" title="Highlights and notes save automatically"></span>
+    <span class="group">
+      <input id="page-input" type="text" inputmode="numeric" value="" aria-label="Page">
+      <span id="page-count">/ 0</span>
+    </span>
+    <span class="group">
+      <button id="btn-zoom-out" class="tb" title="Zoom out">−</button>
+      <span id="zoom-label">100%</span>
+      <button id="btn-zoom-in" class="tb" title="Zoom in">+</button>
+      <button id="btn-fit" class="tb" title="Fit width">Fit</button>
+    </span>
+    <button id="btn-find" class="tb" title="Find (⌘F)">Find</button>
+    <button id="btn-settings" class="tb" title="Settings">Settings</button>
+  </header>
+
+  <div id="findbar" hidden>
+    <input id="find-input" type="text" placeholder="Find in document">
+    <span id="find-count"></span>
+    <button id="find-prev" class="tb" title="Previous">↑</button>
+    <button id="find-next" class="tb" title="Next">↓</button>
+    <button id="find-close" class="tb" title="Close">✕</button>
+  </div>
+
+  <main id="main">
+    <aside id="sidebar" hidden>
+      <div class="side-head">
+        <strong>Notes</strong>
+        <button id="btn-export" class="tb small" title="Export highlights and notes as Markdown">Export</button>
+      </div>
+      <textarea id="doc-note" placeholder="Notes about this paper…"></textarea>
+      <div id="hl-list"></div>
+    </aside>
+
+    <section id="viewer-wrap">
+      <div id="viewerContainer" tabindex="0">
+        <div id="viewer" class="pdfViewer"></div>
+      </div>
+      <div id="empty">
+        <h1>Paper Pal</h1>
+        <p>Open a PDF (⌘O) or drop one here.</p>
+        <button id="btn-open-empty">Open PDF…</button>
+      </div>
+    </section>
+
+    <div id="panel-resizer" hidden></div>
+    <aside id="panel" hidden>
+      <div class="panel-head">
+        <button id="web-back" class="tb small web-only" title="Back">←</button>
+        <button id="web-forward" class="tb small web-only" title="Forward">→</button>
+        <strong id="panel-title">Details</strong>
+        <span class="spacer"></span>
+        <button id="panel-translations" class="tb small" title="Back to your translations" hidden></button>
+        <button id="web-external" class="tb small web-only" title="Open this page in your browser">Open in browser</button>
+        <button id="panel-close" class="tb small" title="Close panel">✕</button>
+      </div>
+      <div id="panel-cite" class="panel-body"></div>
+      <div id="panel-web" class="panel-body" hidden></div>
+      <div id="panel-trans" class="panel-body" hidden>
+        <label class="trans-lang">Translate to <select id="trans-lang"></select></label>
+        <p id="trans-empty" class="hint">Select text in the PDF and choose Translate.</p>
+        <div id="trans-list"></div>
+        <p class="hint">Translated passages stay highlighted in the PDF until you close this panel.</p>
+      </div>
+    </aside>
+  </main>
+
+  <div id="sel-toolbar" class="floating" hidden></div>
+  <div id="ctx-menu" class="floating" hidden></div>
+  <div id="hl-popover" class="floating" hidden></div>
+
+  <dialog id="settings">
+    <form method="dialog">
+      <h2>Settings</h2>
+
+      <h3>AI summaries</h3>
+      <label>OpenRouter API key <span id="openrouter-state" class="state"></span>
+        <input id="key-openrouter" type="password" autocomplete="off" placeholder="sk-or-…">
+      </label>
+      <p class="hint">Optional. Enables an AI summary of each cited paper's abstract, using any model on OpenRouter.</p>
+      <label for="model-search">Model <span class="state">current: <span id="model-current"></span></span></label>
+      <input id="model-search" type="text" placeholder="Search models, e.g. gemini flash" autocomplete="off">
+      <div id="model-list" role="listbox" aria-label="Models"></div>
+      <p id="model-count" class="hint"></p>
+
+      <h3>Citation lookup</h3>
+      <label>Semantic Scholar API key <span id="s2-state" class="state"></span>
+        <input id="key-s2" type="password" autocomplete="off">
+      </label>
+      <p class="hint">Optional. Avoids rate limits on the shared keyless pool, so abstracts and TLDRs load more reliably.</p>
+
+      <h3>Tool shortcuts</h3>
+      <div class="bind-row"><span>Select tool</span><button id="bind-select" type="button" class="bind"></button><button id="unbind-select" type="button" class="tb small">Clear</button></div>
+      <div class="bind-row"><span>Marker tool</span><button id="bind-marker" type="button" class="bind"></button><button id="unbind-marker" type="button" class="tb small">Clear</button></div>
+      <p class="hint">Click a shortcut, then press the mouse button or key you want. V and M always work too.</p>
+
+      <p class="hint">Leave a key field blank to keep the saved key. Keys are stored encrypted on this computer.</p>
+      <div class="actions">
+        <button id="settings-clear" type="button">Remove saved keys</button>
+        <span class="spacer"></span>
+        <button value="cancel">Cancel</button>
+        <button id="settings-save" value="save" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
