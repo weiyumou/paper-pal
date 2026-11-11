@@ -2,6 +2,8 @@
   "name": "paper-pal",
   "version": "0.1.0",
   "description": "Lightweight PDF reader for academic researchers",
+  "author": "Yumou Wei",
+  "license": "MIT",
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
