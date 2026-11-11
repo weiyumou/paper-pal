@@ -9,7 +9,7 @@ const NEW_ENTRY = /^\s*(\[\d{1,3}\]|\d{1,3}\.\s|\[[A-Za-z+\-]{2,}\s?\d{2,4}[a-z]
 const YEAR = /\b(19|20)\d\d[a-z]?\b/;
 
 // Group a page's text items into visual lines (PDF coordinates: y grows upward).
-function buildLines(items) {
+export function buildLines(items) {
   const lines = [];
   let cur = null;
   let endX = 0;
@@ -21,7 +21,7 @@ function buildLines(items) {
     const sameLine = cur && Math.abs(y - cur.y) <= 2 && x >= endX - 5 && x - endX <= 25;
     if (!sameLine) {
       if (!item.str.trim()) continue;
-      cur = { x0: x, x1: x + item.width, y, h, text: '' };
+      cur = { x0: x, x1: x + item.width, y, h, font: item.fontName, text: '' };
       lines.push(cur);
     } else if (x - endX > 1.5 && !cur.text.endsWith(' ')) {
       cur.text += ' ';

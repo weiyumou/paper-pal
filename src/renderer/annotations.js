@@ -65,6 +65,8 @@ export function initAnnotations(ctx) {
   let tool = 'select'; // 'select' (pointer) or 'marker' (every selection becomes a mark)
   let selection = null; // captured text selection the floating UI acts on
   let temp = []; // temporary highlights (translated passages); never saved
+  let undoStack = []; // snapshots of data.highlights taken before each change
+  let redoStack = [];
 
   // ---------- persistence ----------
 
@@ -96,6 +98,8 @@ export function initAnnotations(ctx) {
     hideFloating();
     setTool('select');
     temp = [];
+    undoStack = [];
+    redoStack = [];
     viewReady = false;
     docId = doc.id;
     const saved = await api.loadAnnotations(doc.id);
@@ -131,7 +135,30 @@ export function initAnnotations(ctx) {
     scheduleSave();
   }
 
+  // ---------- undo / redo ----------
+
+  // Call before changing data.highlights. Marks, removals, colour changes and note edits are undoable.
+  function record() {
+    undoStack.push(JSON.stringify(data.highlights));
+    if (undoStack.length > 200) undoStack.shift();
+    redoStack = [];
+  }
+
+  function restore(from, to, label) {
+    if (!data || !from.length) return false;
+    const before = data.highlights;
+    to.push(JSON.stringify(before));
+    data.highlights = JSON.parse(from.pop());
+    hideFloating(); // open popovers point at the replaced highlight objects
+    changed(pagesOf([...before, ...data.highlights]));
+    status.textContent = label;
+    return true;
+  }
+  const undo = () => restore(undoStack, redoStack, 'Undone');
+  const redo = () => restore(redoStack, undoStack, 'Redone');
+
   function addHighlight(sel, color = lastColor) {
+    record();
     const id = crypto.randomUUID();
     const created = new Date().toISOString();
     const parts = [...sel.byPage.entries()].sort((a, b) => a[0] - b[0]);
@@ -149,6 +176,7 @@ export function initAnnotations(ctx) {
 
   function removeHighlight(h) {
     const group = groupOf(h);
+    record();
     data.highlights = data.highlights.filter((x) => !group.includes(x));
     changed(pagesOf(group));
   }
@@ -162,6 +190,7 @@ export function initAnnotations(ctx) {
   function setColor(h, color) {
     useColor(color);
     const group = groupOf(h);
+    if (group.some((x) => x.color !== color)) record();
     group.forEach((x) => (x.color = color));
     changed(pagesOf(group));
   }
@@ -402,7 +431,10 @@ export function initAnnotations(ctx) {
   function openPopover(h, x, y, focus = false) {
     const root = rootOf(h);
     const note = el('textarea', { placeholder: 'Add a note…', value: root.note || '' });
+    let recorded = false; // one undo step per editing session, not per keystroke
     note.oninput = () => {
+      if (!recorded) record();
+      recorded = true;
       root.note = note.value;
       changed(pagesOf(groupOf(root)));
     };
@@ -528,6 +560,15 @@ export function initAnnotations(ctx) {
     flush,
     exportMarkdown,
     setTool,
+    undo,
+    redo,
+    // Extra per-document data (generated table of contents, BibTeX) kept in the same file as the notes.
+    getMeta: (key) => data?.[key] ?? null,
+    setMeta: (id, key, value) => {
+      if (!data || id !== docId) return;
+      data[key] = value;
+      scheduleSave();
+    },
     addTemp,
     removeTemp,
     scrollToTemp,

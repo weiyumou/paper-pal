@@ -1,11 +1,12 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, session, shell, webContents } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const store = require('./store');
-const { lookup } = require('./lookup');
-const { summarize, translate, listModels, DEFAULT_MODEL } = require('./summarize');
+const { lookup, webLookup } = require('./lookup');
+const { findBibtex } = require('./bibtex');
+const { summarize, translate, listModels, generateToc, DEFAULT_MODEL } = require('./summarize');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 // The renderer is served from app://paper-pal/ so ES modules, fetch and workers behave like on the web.
@@ -88,6 +89,12 @@ async function openDialog() {
 async function buildMenu() {
   const { recent = [] } = await store.getSettings();
   const send = (action) => () => win?.webContents.send('menu', action);
+  // Undo and redo go to the app (marks and notes) unless the search panel's web page has focus.
+  const edit = (action) => () => {
+    const focused = webContents.getFocusedWebContents();
+    if (focused && win && focused !== win.webContents) focused[action]();
+    else win?.webContents.send('menu', action);
+  };
   const template = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     {
@@ -113,7 +120,19 @@ async function buildMenu() {
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
       ],
     },
-    { role: 'editMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: edit('undo') },
+        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: edit('redo') },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+      ],
+    },
     {
       label: 'View',
       submenu: [
@@ -123,7 +142,7 @@ async function buildMenu() {
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: send('zoom-out') },
         { label: 'Fit Width', accelerator: 'CmdOrCtrl+0', click: send('fit-width') },
         { type: 'separator' },
-        { label: 'Toggle Notes Sidebar', accelerator: 'CmdOrCtrl+B', click: send('toggle-sidebar') },
+        { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: send('toggle-sidebar') },
         { label: 'Toggle Right Panel', accelerator: 'CmdOrCtrl+Shift+B', click: send('toggle-panel') },
         { type: 'separator' },
         { role: 'togglefullscreen' },
@@ -186,6 +205,33 @@ function registerIpc() {
 
   ipcMain.handle('citation:lookup', async (_e, text) => lookup(String(text || ''), { s2Key: await store.getSecret('s2') }));
 
+  // { apiKey, model } for the optional AI features, or null without an OpenRouter key.
+  const aiConfig = async () => {
+    const apiKey = await store.getSecret('openrouter');
+    return apiKey ? { apiKey, model: (await store.getSettings()).model || DEFAULT_MODEL } : null;
+  };
+
+  ipcMain.handle('citation:web', async (_e, text) => {
+    const ai = await aiConfig();
+    if (!ai) return { found: false, error: 'no-key' };
+    return webLookup(String(text || '').slice(0, 2000), { ...ai, s2Key: await store.getSecret('s2') });
+  });
+
+  ipcMain.handle('paper:bibtex', async (_e, info, useAi) =>
+    findBibtex(info || {}, { s2Key: await store.getSecret('s2'), ai: useAi ? await aiConfig() : null }));
+
+  ipcMain.handle('toc:generate', async (_e, input) => {
+    const ai = await aiConfig();
+    if (!ai) return { error: 'no-key' };
+    const lines = (Array.isArray(input?.lines) ? input.lines : []).slice(0, 2000).map((l) => ({
+      id: Number(l.id),
+      page: Number(l.page),
+      size: Number(l.size),
+      text: String(l.text || '').slice(0, 200),
+    }));
+    return generateToc(ai.apiKey, ai.model, { bodySize: Number(input?.bodySize) || 10, lines });
+  });
+
   ipcMain.handle('citation:summarize', async (_e, paper) => {
     const apiKey = await store.getSecret('openrouter');
     if (!apiKey) return { error: 'no-key' };
@@ -198,6 +244,9 @@ function registerIpc() {
     const { model, translateLang } = await store.getSettings();
     return translate(apiKey, model || DEFAULT_MODEL, String(text || '').slice(0, 20000), translateLang || DEFAULT_LANGUAGE);
   });
+
+  // Copying from the main process works even when the window lost focus during a slow lookup.
+  ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text || '')));
 
   ipcMain.handle('shell:open', (_e, url) => {
     if (isHttpUrl(url)) shell.openExternal(url);

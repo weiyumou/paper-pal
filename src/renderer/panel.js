@@ -23,6 +23,7 @@ export function initPanel(ctx) {
   const transTab = $('panel-translations');
   let translations = []; // { id, text, card } kept until the panel is closed
   const lookups = new Map(); // reference text -> lookup promise
+  const webLookups = new Map(); // reference text -> AI web search promise
   const summaries = new Map(); // paper key -> summary promise
   let settings = api.getSettings();
   let webview = null;
@@ -129,7 +130,7 @@ export function initPanel(ctx) {
         }
       });
     } else if (paper.tldr) {
-      label.textContent = 'AI summary (Semantic Scholar TLDR)';
+      label.textContent = `AI summary (${paper.tldrSource || 'Semantic Scholar TLDR'})`;
       body.textContent = paper.tldr;
     } else {
       body.className = 'muted';
@@ -138,6 +139,14 @@ export function initPanel(ctx) {
         : 'No TLDR is available for this paper. Add an OpenRouter API key in Settings to generate summaries from abstracts.';
     }
     return box;
+  }
+
+  // Where the details came from, and how far to trust them.
+  function provenance(paper) {
+    if (!paper.ai) return `Matched from the reference text via ${(paper.sources || []).join(', ')}. Check the title against the reference if it looks off.`;
+    if (!paper.webFound) return `No scholarly index or web result matched this reference, so ${paper.model} read these details off the reference itself.`;
+    const checked = (paper.sources || []).filter((s) => s !== 'AI web search');
+    return `Compiled by ${paper.model} from a web search${checked.length ? `, then checked against ${checked.join(', ')}` : ''}. AI-compiled details can be wrong: check them against the linked page.`;
   }
 
   async function renderPaper(paper, text, jump, isCurrent) {
@@ -156,9 +165,17 @@ export function initPanel(ctx) {
     }
     if (paper.arxiv) ids.append(el('span', { className: 'id-label', textContent: 'arXiv' }), link(paper.arxiv, `https://arxiv.org/abs/${paper.arxiv}`));
 
-    const summary = await summaryBlock(paper, isCurrent);
+    const summary = paper.ai && !paper.webFound ? null : await summaryBlock(paper, isCurrent);
     if (!isCurrent()) return;
-    citeBody.replaceChildren(
+    // An index match without an abstract can still be filled in from the web, on request (it costs a search).
+    const canSearch = !paper.ai && !paper.abstract && (await settings).hasOpenRouterKey;
+    if (!isCurrent()) return;
+    const more = paper.webNote
+      ? el('p', { className: 'muted small', textContent: paper.webNote })
+      : canSearch
+        ? el('button', { className: 'more', textContent: 'Find the abstract with AI web search', onclick: () => searchWeb(text, jump, isCurrent, paper) })
+        : null;
+    citeBody.replaceChildren(...[
       el('h2', { className: 'paper-title' }, link(paper.title, doiUrl || paper.url || SEARCH_URL.scholar(paper.title))),
       el('p', { className: 'authors', textContent: shown || 'Unknown authors' }),
       meta ? el('p', { className: 'meta', textContent: meta }) : null,
@@ -166,10 +183,54 @@ export function initPanel(ctx) {
       actions(paper, text, jump),
       summary,
       el('section', {}, el('h3', { textContent: 'Abstract' }),
-        el('p', { className: paper.abstract ? 'abstract' : 'muted', textContent: paper.abstract || 'No abstract available from Semantic Scholar, OpenAlex or Crossref.' })),
+        el('p', { className: paper.abstract ? 'abstract' : 'muted', textContent: paper.abstract || (paper.ai ? 'No abstract was found for this work.' : 'No abstract available from Semantic Scholar, arXiv, OpenAlex or Crossref.') }),
+        more),
       refBlock(text),
-      el('p', { className: 'muted small', textContent: `Matched from the reference text via ${(paper.sources || []).join(', ')}. Check the title against the reference if it looks off.` })
+      el('p', { className: 'muted small', textContent: provenance(paper) }),
+    ].filter(Boolean));
+  }
+
+  function renderNoMatch(paper, text, jump, message) {
+    citeBody.replaceChildren(
+      el('h2', { className: 'paper-title', textContent: paper?.titleGuess || 'No match found' }),
+      el('p', { className: 'muted', textContent: message }),
+      el('p', { className: 'ref-preview', textContent: text }),
+      actions(paper?.titleGuess ? { title: paper.titleGuess } : null, text, jump)
     );
+  }
+
+  // Second stage, for references the indexes do not know: the OpenRouter model searches the web and
+  // compiles the page. `known` is an index match that only lacked an abstract; it keeps its verified fields.
+  async function searchWeb(text, jump, isCurrent, known = null) {
+    const { model } = await settings;
+    if (!isCurrent()) return;
+    citeBody.replaceChildren(
+      el('p', { className: 'muted loading', textContent: `${known ? 'Looking for more on this paper' : 'Not in the scholarly indexes. Searching the web'} with ${model}…` }),
+      el('p', { className: 'ref-preview', textContent: text }),
+      actions(known, text, jump)
+    );
+    if (!webLookups.has(text)) webLookups.set(text, api.lookupWeb(text));
+    let web;
+    try {
+      web = await webLookups.get(text);
+    } catch (err) {
+      web = { found: false, error: err.message };
+    }
+    if (!web.found) webLookups.delete(text);
+    if (!isCurrent()) return;
+    if (known) {
+      // Keep the index record; take only what it lacked, and only if the web result is the same paper.
+      const flat = (t) => t.toLowerCase().replace(/\W+/g, '');
+      const same = web.found && web.webFound && web.abstract && flat(web.title) === flat(known.title);
+      const extra = same
+        ? { abstract: web.abstract, pdfUrl: known.pdfUrl || web.pdfUrl, sources: [...known.sources, `${web.model} web search`] }
+        : { webNote: web.error ? `The AI web search failed: ${web.error}` : 'The AI web search found no abstract either.' };
+      return renderPaper({ ...known, ...extra }, text, jump, isCurrent);
+    }
+    if (web.found) return renderPaper(web, text, jump, isCurrent);
+    renderNoMatch(web, text, jump, web.error
+      ? `No scholarly index matched this reference, and the AI web search failed: ${web.error}`
+      : 'Neither the scholarly indexes nor an AI web search matched this reference. Try a web search yourself.');
   }
 
   async function showCitation({ text, jump }) {
@@ -195,14 +256,11 @@ export function initPanel(ctx) {
     if (!isCurrent()) return;
 
     if (paper.found) return renderPaper(paper, text, jump, isCurrent);
-    citeBody.replaceChildren(
-      el('h2', { className: 'paper-title', textContent: 'No match found' }),
-      el('p', { className: 'muted', textContent: paper.error
-        ? `The lookup failed (${paper.error}). Check your connection and click the citation again.`
-        : 'None of the scholarly indexes matched this reference. Try a web search instead.' }),
-      el('p', { className: 'ref-preview', textContent: text }),
-      actions(paper.titleGuess ? { title: paper.titleGuess } : null, text, jump)
-    );
+    if (paper.error) return renderNoMatch(paper, text, jump, `The lookup failed (${paper.error}). Check your connection and click the citation again.`);
+    const { hasOpenRouterKey } = await settings;
+    if (!isCurrent()) return;
+    if (hasOpenRouterKey) return searchWeb(text, jump, isCurrent);
+    renderNoMatch(paper, text, jump, 'None of the scholarly indexes matched this reference. Add an OpenRouter API key in Settings to have an AI web search compile this page instead, or search the web yourself.');
   }
 
   // ---------- translations ----------
@@ -299,6 +357,7 @@ export function initPanel(ctx) {
     settingsChanged: () => {
       settings = api.getSettings();
       lookups.clear();
+      webLookups.clear();
       summaries.clear();
     },
   };

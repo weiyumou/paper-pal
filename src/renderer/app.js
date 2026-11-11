@@ -3,6 +3,8 @@ import { initAnnotations } from './annotations.js';
 import { initCitations } from './citations.js';
 import { initPanel } from './panel.js';
 import { initSettings } from './settings.js';
+import { initToc } from './toc.js';
+import { initBibtex } from './bibtex.js';
 
 // pdf_viewer.mjs reads the core library from a global, so it has to load after this assignment.
 globalThis.pdfjsLib = pdfjsLib;
@@ -25,9 +27,13 @@ linkService.setViewer(pdfViewer);
 
 // Shared context for the feature modules.
 const ctx = { api, container, eventBus, linkService, pdfViewer, doc: null, panel: null, annotations: null };
+// Plain "go there": initCitations wraps the link service's own method to catch citation clicks.
+ctx.goToDestination = linkService.goToDestination.bind(linkService);
 ctx.panel = initPanel(ctx);
 ctx.annotations = initAnnotations(ctx);
 initCitations(ctx);
+const toc = initToc(ctx);
+const bibtex = initBibtex(ctx);
 const settings = initSettings(ctx);
 
 // ---------- opening documents ----------
@@ -67,6 +73,8 @@ async function openFile(file) {
   await ctx.annotations.load(ctx.doc);
   pdfViewer.setDocument(pdf);
   linkService.setDocument(pdf, null);
+  toc.docChanged();
+  bibtex.docChanged();
 
   $('empty').hidden = true;
   $('doc-title').textContent = read.name;
@@ -177,14 +185,38 @@ const sidebar = $('sidebar');
 function toggleSidebar() {
   sidebar.hidden = !sidebar.hidden;
   localStorage.setItem('sidebar', sidebar.hidden ? '0' : '1');
+  toc.refresh();
 }
 sidebar.hidden = localStorage.getItem('sidebar') !== '1';
+
+// The sidebar has two tabs: notes and highlights, or the table of contents.
+function showSideTab(name) {
+  for (const tab of ['notes', 'toc']) {
+    $(`side-${tab}`).hidden = tab !== name;
+    $(`tab-${tab}`).classList.toggle('active', tab === name);
+    $(`tab-${tab}`).setAttribute('aria-selected', String(tab === name));
+  }
+  $('btn-export').hidden = name !== 'notes';
+  localStorage.setItem('side-tab', name);
+  toc.refresh();
+}
+$('tab-notes').onclick = () => showSideTab('notes');
+$('tab-toc').onclick = () => showSideTab('toc');
+showSideTab(localStorage.getItem('side-tab') === 'toc' ? 'toc' : 'notes');
 $('btn-sidebar').onclick = toggleSidebar;
 
 $('btn-settings').onclick = settings.open;
 
+// ⌘Z / ⇧⌘Z: text fields keep their own typing history; everywhere else it undoes marks and notes.
+function history(action) {
+  if (document.activeElement?.closest('input, textarea, [contenteditable]')) document.execCommand(action);
+  else ctx.annotations[action]();
+}
+
 api.onMenu((action) => {
   const actions = {
+    undo: () => history('undo'),
+    redo: () => history('redo'),
     find: openFind,
     'zoom-in': zoomIn,
     'zoom-out': zoomOut,
